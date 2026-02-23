@@ -1,0 +1,24 @@
+{
+  "hp_cut_hz": 30,
+  "low_shelf_hz": 90,
+  "low_shelf_db": -1.5,
+  "mud_cut_hz": 280,
+  "mud_cut_db": -2.5,
+  "presence_hz": 3800,
+  "presence_db": 1.5,
+  "air_hz": 11000,
+  "air_db": 1.2,
+
+  "compressor_threshold_db": -18,
+  "compressor_ratio": 3.0,
+  "compressor_attack_ms": 10,
+  "compressor_release_ms": 120,
+  "compressor_makeup_db": 2.0,
+
+  "saturation_drive": 0.35,
+
+  "stereo_width": 0.10,
+
+  "limiter_ceiling_db": -1.0,
+  "limiter_release_ms": 80
+}
