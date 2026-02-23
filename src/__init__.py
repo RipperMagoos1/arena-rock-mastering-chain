@@ -1,5 +1,3 @@
 """
-Arena Rock Mix & Mastering Chain (Python)
-
-Package initializer.
+Arena Rock Mix & Mastering Chain - source package.
 """
