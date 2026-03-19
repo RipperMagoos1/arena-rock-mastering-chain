@@ -5,7 +5,13 @@ def clamp(audio, low=-1.0, high=1.0):
     return np.clip(audio, low, high)
 
 
-def lowpass(audio, alpha=0.08):
+def highpass_simple(audio, strength=0.995):
+    out = np.copy(audio)
+    out[1:] = audio[1:] - strength * audio[:-1]
+    return out
+
+
+def lowpass_simple(audio, alpha=0.08):
     out = np.copy(audio)
     for ch in range(audio.shape[1]):
         for i in range(1, len(audio)):
@@ -13,52 +19,43 @@ def lowpass(audio, alpha=0.08):
     return out
 
 
-def highpass_from_lowpass(audio, alpha=0.08):
-    return audio - lowpass(audio, alpha=alpha)
+def add_body(audio, amount=0.16):
+    """
+    Adds low-mid/body support so the mix feels fuller.
+    """
+    body = lowpass_simple(audio, alpha=0.025) - lowpass_simple(audio, alpha=0.008)
+    return clamp(audio + amount * body)
 
 
-def sub_bass_enhancer(audio, amount=0.10):
+def sub_bass_support(audio, amount=0.06):
     """
-    Adds a little low-end body without huge boom.
+    Light sub/low support without boom.
     """
-    lows = lowpass(audio, alpha=0.012)
+    lows = lowpass_simple(audio, alpha=0.006)
     return clamp(audio + amount * lows)
 
 
-def mud_control(audio, amount=0.10):
+def eq_stage(audio):
     """
-    Pulls back low-mids slightly so the mix stops sounding cloudy.
+    Original bright/clear tone idea, but less harsh and with a little more weight.
     """
-    low_mid = lowpass(audio, alpha=0.05) - lowpass(audio, alpha=0.015)
-    return clamp(audio - amount * low_mid)
+    rumble_cut = highpass_simple(audio, strength=0.995)
+    smooth = lowpass_simple(rumble_cut, alpha=0.18)
+
+    shaped = 0.82 * rumble_cut + 0.18 * smooth
+
+    # original presence idea, slightly reduced
+    presence = shaped - lowpass_simple(shaped, alpha=0.04)
+    shaped = shaped + 0.05 * presence
+
+    # add fullness back in
+    shaped = add_body(shaped, amount=0.14)
+    shaped = sub_bass_support(shaped, amount=0.05)
+
+    return clamp(shaped)
 
 
-def presence_lift(audio, amount=0.12):
-    """
-    Adds upper-mid clarity for vocals and guitars.
-    """
-    presence = lowpass(audio, alpha=0.18) - lowpass(audio, alpha=0.06)
-    return clamp(audio + amount * presence)
-
-
-def air_exciter(audio, amount=0.05, drive=2.0):
-    """
-    Very light harmonic exciter for top-end clarity.
-    """
-    highs = highpass_from_lowpass(audio, alpha=0.18)
-    excited = np.tanh(highs * drive)
-    return clamp(audio + amount * excited)
-
-
-def vocal_lift_curve(audio, amount=0.08):
-    """
-    Gentle lift centered in the vocal intelligibility zone.
-    """
-    upper_mids = lowpass(audio, alpha=0.12) - lowpass(audio, alpha=0.035)
-    return clamp(audio + amount * upper_mids)
-
-
-def envelope(signal, attack_coeff=0.18, release_coeff=0.003):
+def envelope(signal, attack_coeff=0.2, release_coeff=0.002):
     env = np.zeros_like(signal)
     for i in range(1, len(signal)):
         x = abs(signal[i])
@@ -69,13 +66,10 @@ def envelope(signal, attack_coeff=0.18, release_coeff=0.003):
     return env
 
 
-def bus_compressor(audio, threshold=0.24, ratio=2.4, makeup=1.06):
-    """
-    Glue compression. Lower makeup than before so it doesn't feel over-gained.
-    """
+def bus_compressor(audio, threshold=0.24, ratio=2.8, makeup=1.15):
     out = np.copy(audio)
     mono = np.mean(np.abs(audio), axis=1)
-    env = envelope(mono, attack_coeff=0.18, release_coeff=0.003)
+    env = envelope(mono, attack_coeff=0.2, release_coeff=0.002)
 
     gain = np.ones_like(env)
     for i in range(len(env)):
@@ -90,91 +84,56 @@ def bus_compressor(audio, threshold=0.24, ratio=2.4, makeup=1.06):
     return clamp(out)
 
 
-def parallel_compression(audio, amount=0.18):
-    """
-    Adds density and punch without getting boxy.
-    """
-    crushed = bus_compressor(audio, threshold=0.13, ratio=5.5, makeup=1.18)
+def parallel_compression(audio, amount=0.26):
+    crushed = bus_compressor(audio, threshold=0.11, ratio=7.0, makeup=1.45)
     return clamp((1 - amount) * audio + amount * crushed)
 
 
-def transient_punch(audio, amount=0.06):
-    """
-    Small transient enhancement so drums keep some attack.
-    """
-    diff = np.zeros_like(audio)
-    diff[1:] = audio[1:] - audio[:-1]
-    return clamp(audio + amount * diff)
-
-
-def saturation(audio, drive=1.35, mix=0.18):
-    """
-    Mild harmonic thickening without harsh fizz.
-    """
+def saturation(audio, drive=1.6, mix=0.24):
     wet = np.tanh(audio * drive)
     return clamp((1 - mix) * audio + mix * wet)
 
 
-def stereo_widen(audio, width=1.06):
-    """
-    Small width bump only. Too much width smeared clarity before.
-    """
+def stereo_widen(audio, width=1.10):
     left = audio[:, 0]
     right = audio[:, 1]
 
-    mid = 0.5 * (left + right)
-    side = 0.5 * (left - right)
+    mid = (left + right) * 0.5
+    side = (left - right) * 0.5
 
     side *= width
 
     new_left = mid + side
     new_right = mid - side
 
-    return clamp(np.stack([new_left, new_right], axis=1))
+    out = np.stack([new_left, new_right], axis=1)
+    return clamp(out)
 
 
-def final_limiter(audio, ceiling=0.94):
-    """
-    Conservative peak limit so the output doesn't sound overdriven.
-    """
+def transient_push(audio, amount=0.08):
+    diff = np.zeros_like(audio)
+    diff[1:] = audio[1:] - audio[:-1]
+    return clamp(audio + amount * diff)
+
+
+def limiter(audio, ceiling=0.95):
     peak = np.max(np.abs(audio))
     if peak > ceiling:
         audio = audio * (ceiling / peak)
     return clamp(audio)
 
 
-def final_trim(audio, gain=0.97):
-    """
-    Tiny final trim so it doesn't feel like the gain got pushed too hard.
-    """
+def final_trim(audio, gain=0.98):
     return clamp(audio * gain)
 
 
 def pro_master(audio):
-    # Start with weight
-    audio = sub_bass_enhancer(audio, amount=0.08)
-
-    # Remove cloudiness
-    audio = mud_control(audio, amount=0.11)
-
-    # Glue and punch
-    audio = bus_compressor(audio, threshold=0.24, ratio=2.4, makeup=1.05)
-    audio = parallel_compression(audio, amount=0.16)
-    audio = transient_punch(audio, amount=0.05)
-
-    # Harmonic body
-    audio = saturation(audio, drive=1.3, mix=0.16)
-
-    # Clarity stages
-    audio = presence_lift(audio, amount=0.10)
-    audio = vocal_lift_curve(audio, amount=0.07)
-    audio = air_exciter(audio, amount=0.045, drive=1.9)
-
-    # Slight width
-    audio = stereo_widen(audio, width=1.05)
-
-    # Safer final level
-    audio = final_limiter(audio, ceiling=0.94)
-    audio = final_trim(audio, gain=0.97)
-
+    audio = eq_stage(audio)
+    audio = bus_compressor(audio, threshold=0.24, ratio=2.8, makeup=1.12)
+    audio = parallel_compression(audio, amount=0.24)
+    audio = transient_push(audio, amount=0.07)
+    audio = saturation(audio, drive=1.55, mix=0.22)
+    audio = stereo_widen(audio, width=1.08)
+    audio = limiter(audio, ceiling=0.95)
+    audio = final_trim(audio, gain=0.98)
     return clamp(audio)
